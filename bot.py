@@ -43,16 +43,21 @@ _sent_indexes: set[int] = set()
 
 
 def _pick_state_dir() -> Path:
-    """Возвращает папку для state.json: /data на Amvera, иначе рядом с кодом."""
-    data = Path("/data")
-    if data.is_dir():
-        probe = data / ".write_test"
-        try:
-            probe.touch()
-            probe.unlink()
-            return data
-        except OSError:
-            pass
+    """Возвращает папку для state.json.
+
+    Порядок: /app/data (постоянное хранилище Bothost) -> /data (прочие
+    хостинги с volume) -> рядом с кодом (локальный запуск).
+    """
+    for candidate in ("/app/data", "/data"):
+        data = Path(candidate)
+        if data.is_dir():
+            probe = data / ".write_test"
+            try:
+                probe.touch()
+                probe.unlink()
+                return data
+            except OSError:
+                continue
     return Path(__file__).resolve().parent
 
 
