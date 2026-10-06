@@ -25,9 +25,9 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
+    KeyboardButton,
     Message,
+    ReplyKeyboardMarkup,
 )
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -82,12 +82,12 @@ def save_target_chat_id(chat_id: int) -> None:
     )
 
 
-def build_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура с кнопкой-комплиментом."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="💌 Получить комплимент", callback_data="compliment")]
-        ]
+def build_keyboard() -> ReplyKeyboardMarkup:
+    """Закреплённая reply-клавиатура внизу, кнопка «Хочу!»."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Хочу!")]],
+        resize_keyboard=True,
+        is_persistent=True,
     )
 
 
@@ -136,24 +136,30 @@ async def main() -> None:
     )
     dp = Dispatcher(storage=MemoryStorage())
 
-    # Получение комплимента по кнопке.
-    @dp.callback_query(F.data == "compliment")
-    async def on_compliment(callback_query, bot: Bot) -> None:
-        await callback_query.answer()
-        save_target_chat_id(callback_query.from_user.id)
-        await send_compliment(bot, callback_query.message.chat.id)
+    # Кнопка «Хочу!» — получить комплимент.
+    @dp.message(F.text == "Хочу!")
+    async def on_want(message: Message, bot: Bot) -> None:
+        save_target_chat_id(message.chat.id)
+        await send_compliment(bot, message.chat.id)
 
     # Стартовая команда.
     @dp.message(CommandStart())
     async def on_start(message: Message, bot: Bot) -> None:
         save_target_chat_id(message.chat.id)
         await message.answer(
-            "Привет, {name}! 🌅\n\n"
+            "Привет, Алиночка! 💗\n"
             "Этот бот создан, чтобы каждый день напоминать тебе, как ты важна.\n"
-            "Жми кнопку — и получай ещё один кусочек нежности. Каждое утро в 7:00 "
-            "я тоже буду заглядывать к тебе с комплиментом. 💛".format(name=settings.girl_name),
+            "Жми кнопку - и получай ещё один кусочек нежности",
             reply_markup=build_keyboard(),
         )
+
+    # Любой другой текст — «не знаю такой команды».
+    @dp.message(F.text)
+    async def on_unknown(message: Message) -> None:
+        if message.text.startswith("/"):
+            return
+        save_target_chat_id(message.chat.id)
+        await message.answer("Алиночка, я не знаю такой команды")
 
     # Планировщик утреннего комплимента (7:00 МСК, каждый день).
     scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
