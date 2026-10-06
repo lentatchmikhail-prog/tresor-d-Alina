@@ -45,6 +45,22 @@ _sent_indexes: set[int] = set()
 # Кнопки reply-клавиатуры.
 KEY_WANT = "Хочу!"
 KEY_DAYS = "Сколько мы вместе?"
+KEY_GAMES = "Мини-игры"
+
+# Кнопки мини-игр.
+G_RPS = "Камень-ножницы-бумага"
+G_GUESS = "Угадай число (1-100)"
+G_BACK = "Назад"
+G_MENU = "Меню игр"
+G_ROCK = "Камень"
+G_SCISSORS = "Ножницы"
+G_PAPER = "Бумага"
+G_GIVEUP = "Сдаюсь"
+G_RETRY = "Заново"
+RPS_CHOICES = [G_ROCK, G_SCISSORS, G_PAPER]
+
+# Состояние игр по чатам.
+_game_state: dict[int, dict] = {}
 
 # От какой даты считаем дни вместе.
 START_DATE = date(2026, 9, 10)
@@ -95,6 +111,45 @@ def build_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text=KEY_WANT)],
             [KeyboardButton(text=KEY_DAYS)],
+            [KeyboardButton(text=KEY_GAMES)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def games_keyboard() -> ReplyKeyboardMarkup:
+    """Подменю выбора игры."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=G_RPS)],
+            [KeyboardButton(text=G_GUESS)],
+            [KeyboardButton(text=G_BACK)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def rps_keyboard() -> ReplyKeyboardMarkup:
+    """Клавиатура выбора жеста в «Камень-ножницы-бумага»."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=G_ROCK), KeyboardButton(text=G_SCISSORS), KeyboardButton(text=G_PAPER)],
+            [KeyboardButton(text=G_MENU)],
+        ],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def guess_keyboard() -> ReplyKeyboardMarkup:
+    """Клавиатура в игре «Угадай число»."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=G_RETRY)],
+            [KeyboardButton(text=G_GIVEUP)],
+            [KeyboardButton(text=G_MENU)],
         ],
         resize_keyboard=True,
         is_persistent=True,
@@ -179,6 +234,29 @@ def _day_word(n: int) -> str:
     return "дней"
 
 
+def _rps_winner(you: str, me: str) -> str:
+    """Возвращает результат раунда камень-ножницы-бумага."""
+    if you == me:
+        return "ничья — повторим!"
+    beats = {G_ROCK: G_SCISSORS, G_SCISSORS: G_PAPER, G_PAPER: G_ROCK}
+    if beats[you] == me:
+        return "ты выиграла 🎉"
+    return "я выиграл 😄"
+
+
+def _rps_active(message: Message) -> bool:
+    st = _game_state.get(getattr(message.chat, "id", None))
+    return bool(st and st.get("mode") == "rps"
+                and (message.text or "").strip() in RPS_CHOICES)
+
+
+def _guess_active(message: Message) -> bool:
+    st = _game_state.get(getattr(message.chat, "id", None))
+    text = (message.text or "").strip()
+    return bool(st and st.get("mode") == "guess"
+                and text.lstrip("-").isdigit())
+
+
 async def send_compliment(bot: Bot, chat_id: int) -> None:
     """Отправляет комплимент: иногда короткой эмодзи-формой (фича 8)."""
     await _typing(bot, chat_id, 0.8)
@@ -240,6 +318,110 @@ async def main() -> None:
             "А «Сколько мы вместе?» посчитает наши дни 💛",
             reply_markup=build_keyboard(),
         )
+
+    # Кнопка «Мини-игры» — открыть подменю с играми.
+    @dp.message(F.text == KEY_GAMES)
+    async def on_games(message: Message, bot: Bot) -> None:
+        save_target_chat_id(message.chat.id)
+        await _typing(bot, message.chat.id, 0.4)
+        await message.answer(
+            "Поиграем, Алиночка? 🌷",
+            reply_markup=games_keyboard(),
+        )
+
+    # «Назад» из подменю игр — вернуться в главное меню.
+    @dp.message(F.text == G_BACK)
+    async def on_back(message: Message, bot: Bot) -> None:
+        _game_state.pop(getattr(message.chat, "id", None), None)
+        await _typing(bot, message.chat.id, 0.3)
+        await message.answer(
+            "Главное меню 💗",
+            reply_markup=build_keyboard(),
+        )
+
+    # «Меню игр» — вернуться к выбору игры.
+    @dp.message(F.text == G_MENU)
+    async def on_menu_games(message: Message, bot: Bot) -> None:
+        _game_state.pop(getattr(message.chat, "id", None), None)
+        await _typing(bot, message.chat.id, 0.3)
+        await message.answer("Меню игр 🌷", reply_markup=games_keyboard())
+
+    # Начало «Камень-ножницы-бумага».
+    @dp.message(F.text == G_RPS)
+    async def on_rps_start(message: Message, bot: Bot) -> None:
+        chat = message.chat.id
+        _game_state[chat] = {"mode": "rps"}
+        await _typing(bot, chat, 0.4)
+        await message.answer(
+            "Камень, ножницы, бумага! Выбирай жест 👊✌️🖐",
+            reply_markup=rps_keyboard(),
+        )
+
+    # Начало «Угадай число».
+    @dp.message(F.text == G_GUESS)
+    async def on_guess_start(message: Message, bot: Bot) -> None:
+        chat = message.chat.id
+        _game_state[chat] = {"mode": "guess", "target": random.randint(1, 100)}
+        await _typing(bot, chat, 0.4)
+        await message.answer(
+            "Я загадал число от 1 до 100. Угадывай! 🔢",
+            reply_markup=guess_keyboard(),
+        )
+
+    # Ход в «Камень-ножницы-бумага».
+    @dp.message(_rps_active)
+    async def on_rps_move(message: Message, bot: Bot) -> None:
+        you = message.text.strip()
+        me = random.choice(RPS_CHOICES)
+        await _typing(bot, message.chat.id, 0.6)
+        await message.answer(
+            f"Ты — {you.lower()}, я — {me.lower()}.\n"
+            f"Итог: {_rps_winner(you, me)} 💛",
+            reply_markup=rps_keyboard(),
+        )
+
+    # Обработка числа в «Угадай число».
+    @dp.message(_guess_active)
+    async def on_guess_move(message: Message, bot: Bot) -> None:
+        chat = message.chat.id
+        st = _game_state[chat]
+        target = st["target"]
+        guess = int(message.text.strip())
+        await _typing(bot, chat, 0.5)
+        if guess < target:
+            await message.answer("Больше 🔺", reply_markup=guess_keyboard())
+        elif guess > target:
+            await message.answer("Меньше 🔻", reply_markup=guess_keyboard())
+        else:
+            _game_state.pop(chat, None)
+            await message.answer(
+                f"Угадала! Это было {target} 🎉\nСыграем ещё?",
+                reply_markup=games_keyboard(),
+            )
+
+    # «Заново» в угадайке — новое число.
+    @dp.message(F.text == G_RETRY)
+    async def on_guess_retry(message: Message, bot: Bot) -> None:
+        chat = message.chat.id
+        _game_state[chat] = {"mode": "guess", "target": random.randint(1, 100)}
+        await _typing(bot, chat, 0.4)
+        await message.answer("Загадал новое число. Угадывай! 🔢",
+                             reply_markup=guess_keyboard())
+
+    # «Сдаюсь» — показать число.
+    @dp.message(F.text == G_GIVEUP)
+    async def on_guess_giveup(message: Message, bot: Bot) -> None:
+        chat = message.chat.id
+        st = _game_state.get(chat)
+        await _typing(bot, chat, 0.4)
+        if st and st.get("mode") == "guess":
+            _game_state[chat] = {"mode": "guess", "target": random.randint(1, 100)}
+            await message.answer(
+                f"Я загадал {st['target']}. Не страшно — новое число наготове! 🔢",
+                reply_markup=guess_keyboard(),
+            )
+        else:
+            await message.answer("Сыграем? 🌷", reply_markup=games_keyboard())
 
     # Любой другой текст: умный ответ, случайная нота или «не знаю команды».
     @dp.message(F.text)
